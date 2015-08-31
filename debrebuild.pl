@@ -19,7 +19,7 @@ my $dtypes = "Depends";
 my %pstatus;
 my @packlist = ();
 
-my $bdir = "/home/fandrieu/r";
+my $bdir = "/root/r";
 
 # Translates AptPkg's (localized) dependency types to what's used by debtree.
 # This is only needed for regular dependencies, not build dependencies.
@@ -262,8 +262,8 @@ sub patch {
 }
 
 my $cflags =
-"\"-O2 -mtune=core2 -march=core2 -mfpmath=sse -fstack-protector --param=ssp-buffer-size=4 -Wformat -Werror=format-security\"";
-my $deb_build_options = "\"parallel\"";
+"\"-O2 -mtune=bonnell -march=bonnell -mfpmath=sse -ffast-math -fomit-frame-pointer\"";
+my $deb_build_options = "\"nocheck parallel=4\"";
 
 sub build {
 	@_ == 3 or return;
@@ -280,17 +280,18 @@ sub build {
 	chdir "$src_name-$upver";
 
 	# Add an entry in changelog
-	system "debchange --local +atom --distribution trusty 'Built by apt-build'";
+	system "debchange --local +bonnell --distribution wily 'Built by mydebtools'";
 
 	my $r = 1;
 
 	if ($r) {
 
+		$ENV{'DEB_BUILD_OPTIONS'} = 'nocheck';
+		$ENV{'DEB_CFLAGS'} = $cflags;
+		$ENV{'DEB_CXXFLAGS'} = $cflags;
+		$ENV{'LANGUAGE'} = 'C';
 		# Now build
-		$r = !system "DEB_BUILD_OPTIONS=$deb_build_options  
-        CXXFLAGS_EXTRA=$cflags   
-        DEB_CFLAGS=$cflags 
-        DEB_CXXFLAGS=$cflags dpkg-buildpackage -j8";
+		$r = !system "dpkg-buildpackage";
 		wait;
 	}
 
@@ -313,6 +314,8 @@ sub touch {
 	my $now = time();
 	utime( $now, $now, $fname ) || die "utime: $!";
 }
+
+$ENV{'LANGUAGE'} = 'C';
 
 chdir $bdir;
 
@@ -378,7 +381,12 @@ for my $pkg_name (@blist) {
 		my $upver = $_version->upstream($src_version);
 		my $maintver = $1 if $src_version =~ /^$upver-(.*)$/;
 		touch("$deb_file_name.built");
-		build( $src_name, $upver, $maintver );
+		if(!build( $src_name, $upver, $maintver ))
+		{
+			print "$pkg_name : BUILD FAILED\n";
+			unlink("$deb_file_name.built");
+			touch("$deb_file_name.failed");
+		}
 	}
 }
 
