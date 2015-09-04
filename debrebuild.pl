@@ -227,7 +227,7 @@ sub builddep {
 
 	print STDERR
 	  "-----> Installing build dependencies (for $pkg=$pkg_version) <-----";
-	!system "sudo apt-get -y" . " @apt_args build-dep $pkg=$pkg_version";
+	!system "sudo apt-get -y --force-yes" . " @apt_args build-dep $pkg=$pkg_version";
 }
 
 sub source_by_package {

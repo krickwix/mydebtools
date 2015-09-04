@@ -99,7 +99,7 @@ sub get_src_version {
 	while (<APTCIN>) {
 		if (/^Source: (.*)\((.*)\)/) {
 			$src_version = $2;
-			last;
+			#last;
 		}
 	}
 	close(APTCIN);
@@ -236,15 +236,25 @@ sub source_by_package {
 	  or return;
 	my ( $pkg_version, $src_version, $src_name );
 
+	print "source_by_package : $pkg_version, $src_version, $src_name\n";
+
 	if ( !( $src_version = shift ) ) {
 
 		# no version passed along.
 		$src_version = &get_src_version($pkg_name);
 	}
 
+	print "source_by_package : $src_version\n";
+
 	$src_name = &get_src_name( $pkg_name, $src_version );
 
-	return source_by_source( $src_name, $src_version );
+	print "source_by_package : $src_name\n";
+
+	my $sbs = source_by_source( $src_name, $src_version );
+
+	print "source_by_package : $sbs\n";
+
+	return $sbs;
 }
 
 sub source_by_source {
@@ -336,7 +346,11 @@ my @srclist = ();
 for my $pkg_name (@packlist) {
 	#print "** $pkg_name\n";
 	my $pkg_version = &get_pkg_version($pkg_name);
+
+	my $sbs = source_by_package($pkg_name,$pkg_version);
+
 	print "$pkg_name : $pkg_version\n";
+
 	if ($pkg_version eq '(none)') {
 		print "$pkg_name might be virtual : skipping\n";
 		next;
