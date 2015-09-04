@@ -167,7 +167,7 @@ sub build_deb_filename {
 
 	# dpkg-buildpackage doesn't put epoch in file name, so remove it.
 	$pkg_version_file =~ s/^\d://;
-	$deb_file = $pkg_name . "_" . $pkg_version_file . "+atom_" . $arch . ".deb";
+	$deb_file = $pkg_name . "_" . $pkg_version_file . "+native_" . $arch . ".deb";
 }
 
 sub uniq {
@@ -262,8 +262,8 @@ sub patch {
 }
 
 my $cflags =
-"\"-O2 -mtune=bonnell -march=bonnell -mfpmath=sse -ffast-math -fomit-frame-pointer\"";
-my $deb_build_options = "\"nocheck parallel=4\"";
+"\"-O2 -mtune=native -march=native -mfpmath=sse -fomit-frame-pointer\"";
+my $deb_build_options = "\"nocheck parallel=8\"";
 
 sub build {
 	@_ == 3 or return;
@@ -280,7 +280,7 @@ sub build {
 	chdir "$src_name-$upver";
 
 	# Add an entry in changelog
-	system "debchange --local +bonnell --distribution wily 'Built by mydebtools'";
+	system "debchange --local +native --distribution wily 'Built by mydebtools'";
 
 	my $r = 1;
 
