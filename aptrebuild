@@ -1,0 +1,215 @@
+#!/usr/bin/python
+
+import sys
+import argparse
+import apt
+import os
+import subprocess
+import apt_pkg
+import fnmatch
+
+# default values
+workdir = '/var/lib/aptrebuild'
+depth = 0
+package_name = 'all'
+force_rebuild=False
+deps_pkg_name = []
+nobuild = True
+noupdate = True
+nosrc = None
+failed_build = None
+
+""" Parse the cli arguments and initializes global Variables. """
+def parse_arguments(argv):
+    global force_rebuild
+    global package_name
+    global depth
+    global workdir
+    global nobuild
+    global noupdate
+    
+    parser = argparse.ArgumentParser(description='rebuild a package and its dependencies')
+    parser.add_argument('package_name')
+    parser.add_argument('-f','--force',help='force rebuild the package',action="store_true")
+    parser.add_argument('-n','--nobuild',help='no build phase',action="store_true")
+    parser.add_argument('-nu','--noupdate',help='no update phase before build',action="store_true")
+    parser.add_argument('--depth',help='dependencies depth',type=int)
+    parser.add_argument('--workdir',help='workdir')
+    
+    args = parser.parse_args(argv)
+    
+    force_rebuild = args.force
+    package_name = args.package_name
+    nobuild = args.nobuild
+    noupdate = args.noupdate
+    if args.depth != None:
+        depth = args.depth
+    if args.workdir != None:
+        workdir = args.workdir
+
+""" Recursively scans dependencies for a package, up to depth """
+def scan_dependencies(pack,d):
+    global deps_pkg_name
+    root_package = pack
+    print '- [' + str(depth-d) + ']:' + root_package,
+    if d == 0 :
+        return
+    else:
+        cache = apt.Cache()
+        try: 
+            pkg = cache[pack]
+            deps = pkg.candidate.get_dependencies('Depends')
+            for i in deps:
+                if cache.is_virtual_package(pack) == False:
+                    deps_pkg_name.append(i[0].name)
+                    print
+                else:
+                    print '(virtual)'
+                scan_dependencies(i[0].name,d-1)
+        except:
+            return
+    return
+    
+def _file_is_same(path, size, md5):
+    """Return ``True`` if the file is the same."""
+    if os.path.exists(path) and os.path.getsize(path) == size:
+        with open(path) as fobj:
+            return apt_pkg.md5sum(fobj) == md5
+
+def find_files(base, pattern):
+    '''Return list of files matching pattern in base folder.'''
+    return [n for n in fnmatch.filter(os.listdir(base), pattern) if
+        os.path.isfile(os.path.join(base, n))]
+
+def details(pkglist):
+    for i in pkglist:
+        cache = apt.Cache()
+        pkg = cache[i]
+        version = pkg.candidate
+        src = apt_pkg.SourceRecords()
+
+        source_name = version.package.shortname
+        source_version = version._cand.ver_str
+        source_lookup = src.lookup(source_name)
+        print '%s:%s=%s(%s)' % (source_name,source_version,source_lookup,version.architecture)
+        while source_lookup and source_version != src.version:
+            source_lookup = src.lookup(source_name)
+        if not source_lookup:
+            print "No source for %s %s" % (source_name, source_version)
+            continue
+        patt = source_name+'_'+source_version+'+aptbuild*.changes'
+        print patt
+        ch = find_files(workdir,patt)
+        if ch:
+            print ch + ' already exist'
+
+def fetch_source_and_build(pack):
+    global workdir
+    global force_rebuild
+    global nosrc
+    global failed_build
+    
+    if pack == 'gcc' or pack == 'gcc-5' or pack == 'gcc-5-base' or pack == 'libstdc++6' or pack == 'libc6' or pack == 'libgcc1' or pack == 'python:any' or pack == 'python3:any':
+        return
+    
+    destdir = workdir
+    cache = apt.Cache()
+    try:
+    	pkg = cache[pack]
+    except:
+        return;
+    version = pkg.candidate
+    
+    src = apt_pkg.SourceRecords()
+    acq = apt_pkg.Acquire(apt.progress.text.AcquireProgress())
+    source_name = version.package.shortname
+    source_version = version._cand.ver_str
+    source_lookup = src.lookup(source_name)
+    print '%s:%s=%s(%s)' % (source_name,source_version,source_lookup,version.architecture)
+    while source_lookup and source_version != src.version:
+        source_lookup = src.lookup(source_name)
+    if not source_lookup:
+        print "************* No source for %s %s" % (source_name, source_version)
+        nosrc.write(source_name+':'+source_version+'\n')
+        return
+    files = list()
+    dsc = ''
+    for md5, size, path, type_ in src.files:
+        base = os.path.basename(path)
+        destfile = os.path.join(destdir, base)
+        if type_ == 'dsc':
+            dsc = destfile
+        if _file_is_same(destfile, size, md5):
+            print(('Ignoring already existing file: %s' % destfile))
+            continue
+        files.append(apt_pkg.AcquireFile(acq, src.index.archive_uri(path),
+                         md5, size, base, destfile=destfile))
+    acq.run()
+    for item in acq.items:
+        if item.status != item.STAT_DONE:
+            print("The item %r could not be fetched: %s" %
+                                 (item.destfile, item.error_text))
+
+    outdir = src.package + '-' + apt_pkg.upstream_version(src.version)
+    outdir = os.path.join(destdir, outdir)
+    if os.path.exists(os.path.abspath(outdir)) == False:
+        subprocess.check_call(["dpkg-source", "-x", dsc, outdir])
+    os.chdir(os.path.abspath(outdir))
+    
+    patt = dsc.replace('.dsc','*.changes')
+    patt = os.path.basename(patt)
+    print patt
+    ch = find_files(workdir,patt)
+    print ch
+    if ch:
+        print 'a changes file exists'
+        if force_rebuild == False:
+            print 'Skip build for '+source_name
+            return
+    subprocess.check_call(["sudo","apt-get","build-dep","-y", "--force-yes", source_name])
+    subprocess.check_call(["debchange", "-D", "wily", "--local", "+aptbuild", "aptrebuild"])
+    #subprocess.check_call(["debclean"])
+    try:
+        os.environ['DEB_BUILD_OPTIONS'] = "nocheck"
+        os.environ['CFLAGS'] = "-O2 -mtune=native -march=native -fPIC"
+        os.environ['CXXFLAGS'] = "-O2 -mtune=native -march=native -fPIC"
+        os.environ['DEB_CFLAGS'] = "-O2 -mtune=native -march=native -fPIC"
+        os.environ['DEB_CXXFLAGS'] = "-O3 -mtune=native -march=native -fPIC"
+        subprocess.check_call(["dpkg-buildpackage", "-F", "-Jauto", "-us", "-uc", "-sa"])
+        #subprocess.check_call(["dpkg-buildpackage", "-S", "-us", "-uc"])
+    except Exception as e:
+        failed_build.write(source_name+':'+source_version+'\n')
+        print e
+    
+if __name__ == '__main__':
+    parse_arguments(sys.argv[1:])
+    
+    print '- building ' + package_name
+    if force_rebuild:
+        print '  * (build force) '
+    print '  * (dependencies depth ' + str(depth) +')'
+    print '  * (working directory ' + workdir + ')'
+
+    # Recursively scans dependencies of the packae if depth > 0, else
+    # only mark the initial package to be built    
+    deps_pkg_name.append(package_name)
+    if depth > 0:
+        scan_dependencies(package_name,depth)        
+    print
+    deps_pkg_name = list(set(deps_pkg_name))
+    
+    print str(len(deps_pkg_name)) + ' packages to be rebuilt'
+    for i in deps_pkg_name:
+        print i,
+    print
+    if noupdate == False:
+    	subprocess.check_call(["sudo","apt-get","update"])
+    if nobuild == False:
+        nosrc = open('nosource.txt','w')
+        failed_build = open('failed.txt','w')
+        for i in deps_pkg_name:
+            fetch_source_and_build(i)
+        nosrc.close()
+        failed_build.close()
+    else:
+        details(deps_pkg_name)
